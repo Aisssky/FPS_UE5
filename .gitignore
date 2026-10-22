@@ -1,0 +1,39 @@
+# =====================================================================
+# Unreal Engine 5 项目 .gitignore
+# =====================================================================
+
+# ---- IDE / 编辑器（Visual Studio / Rider / VSCode / Xcode）----
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+
+# ---- 构建产物 / 引擎生成文件 ----
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+
+# ---- 操作系统文件 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 日志 / 崩溃报告 ----
+*.log
+CrashReportClient/
+
+# ---- 游戏内容资源（当前不提交，后续如需可通过 Git LFS 单独接入）----
+Content/
