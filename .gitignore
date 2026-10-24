@@ -35,5 +35,6 @@ desktop.ini
 *.log
 CrashReportClient/
 
-# ---- 游戏内容资源（当前不提交，后续如需可通过 Git LFS 单独接入）----
-Content/
+# ---- 游戏内容资源（Content/FPS 逻辑/蓝图资源直提，其余大二进制后续走 Git LFS）----
+Content/*
+!Content/FPS/
