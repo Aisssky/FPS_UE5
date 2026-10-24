@@ -9,17 +9,40 @@
 #include "Components/TextBlock.h"
 #include "Materials/MaterialInterface.h"
 #include "Weapon/Weapon.h"
+#include "GameFramework/PlayerController.h"
 
 void UReserveAmmo::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
-	
-	Image_WeaponIcon->SetRenderOpacity(0.f);
-	Text_Ammo->SetRenderOpacity(0.f);
-	
-	GetOwningPlayer()->OnPossessedPawnChanged.AddDynamic(this, &ThisClass::OnPossessedPawnChanged);
-	
-	AShooterCharacter* ShooterCharacter = Cast<AShooterCharacter>(GetOwningPlayer()->GetPawn());
+
+	if (IsValid(Image_WeaponIcon))
+	{
+		Image_WeaponIcon->SetRenderOpacity(0.f);
+	}
+
+	if (IsValid(Text_Ammo))
+	{
+		Text_Ammo->SetRenderOpacity(0.f);
+	}
+
+	APlayerController* PC = GetOwningPlayer();
+
+	if (!IsValid(PC))
+	{
+		UE_LOG(
+			LogTemp,
+			Error,
+			TEXT("ReserveAmmo: Owning Player is invalid in NativeOnInitialized")
+		);
+		return;
+	}
+
+	PC->OnPossessedPawnChanged.AddUniqueDynamic(
+		this,
+		&ThisClass::OnPossessedPawnChanged
+	);
+
+	AShooterCharacter* ShooterCharacter =Cast<AShooterCharacter>(PC->GetPawn());
 	if (!IsValid(ShooterCharacter)) return;
 	OnPossessedPawnChanged(nullptr, ShooterCharacter);
 	
