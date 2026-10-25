@@ -31,6 +31,12 @@ Build/
 Thumbs.db
 desktop.ini
 
+# ---- WorkBuddy 工作区数据（本地记忆/临时数据，不入库）----
+.workbuddy/
+
+# ---- 施工蓝图与进度文档（本地留存，不入库）----
+dos/
+
 # ---- 日志 / 崩溃报告 ----
 *.log
 CrashReportClient/

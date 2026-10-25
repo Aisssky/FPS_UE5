@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AbilitySystemInterface.h"
 #include "Data/SpecialElimData.h"
 #include "GameFramework/PlayerState.h"
 #include "ShooterPlayerState.generated.h"
@@ -11,14 +12,26 @@
 class USpecialElim;
 class USpecialElimData;
 enum class ESpecialElimType : uint16;
+class UFPSAbilitySystemComponent;
+class UFPSAttributeSet;
+
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FScoreChanged, int32, NewScore);
 
 UCLASS()
-class FPS_API AShooterPlayerState : public APlayerState
+class FPS_API AShooterPlayerState : public APlayerState,public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 public:
+	
+	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+	
+	UPROPERTY()
+	TObjectPtr<UFPSAbilitySystemComponent> AbilitySystemComponent;
+	
+	UPROPERTY()
+	TObjectPtr<UFPSAttributeSet> AttributeSet;
+	
 	AShooterPlayerState();
 	
 	UPROPERTY(BlueprintAssignable)

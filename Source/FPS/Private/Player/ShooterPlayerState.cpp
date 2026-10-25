@@ -2,10 +2,16 @@
 
 
 #include "Player/ShooterPlayerState.h"
-
+#include "AbilitySystem/FPSAbilitySystemComponent.h"
+#include "AbilitySystem/FPSAttributeSet.h"
 #include "TimerManager.h"
 #include "Data/SpecialElimData.h"
 #include "UI/Elims/SpecialElim.h"
+
+UAbilitySystemComponent* AShooterPlayerState::GetAbilitySystemComponent() const
+{
+	return AbilitySystemComponent;
+}
 
 AShooterPlayerState::AShooterPlayerState()
 {
@@ -25,6 +31,11 @@ AShooterPlayerState::AShooterPlayerState()
 	bWinner = false;
 	bIsProcessingQueue = false;
 	ElimDisplayTime = 0.5f;
+	
+	AbilitySystemComponent=CreateDefaultSubobject<UFPSAbilitySystemComponent>("AbilitySystemComponent");
+	AbilitySystemComponent->SetIsReplicated(true);
+	AttributeSet = CreateDefaultSubobject<UFPSAttributeSet>("AttributeSet");
+
 }
 
 void AShooterPlayerState::AddScoredElim()

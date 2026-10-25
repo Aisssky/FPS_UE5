@@ -6,6 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "Components/ActorComponent.h"
 #include "GameFramework/Actor.h"
+#include "Combat/ShotRequest.h"
 #include "CombatComponent.generated.h"
 
 
@@ -123,8 +124,14 @@ private:
 	UFUNCTION(Server, Reliable)
 	void Server_Aim(bool bPressed);
 	
+	/*
 	UFUNCTION(Server, Reliable)
 	void Server_FireWeapon(const FHitResult& Hit);
+	*/
+	
+	UFUNCTION(Server, Reliable)
+	void Server_RequestFire(const FShotRequest& Request);
+	
 	
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_FireWeapon(const FHitResult& Hit, int32 AuthAmmo);

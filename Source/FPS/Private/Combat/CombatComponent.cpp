@@ -255,7 +255,20 @@ void UCombatComponent::Local_FireWeapon()
 	OnRoundFired.Broadcast(CurrentWeapon->Ammo, CurrentWeapon->MagCapacity, CurrentReserveAmmo);
 	
 	GetWorld()->GetTimerManager().SetTimer(FireTimer, this, &ThisClass::FireTimerFinished, CurrentWeapon->FireTime);
-	Server_FireWeapon(Hit);
+	
+	//Server_FireWeapon(Hit);
+	
+	FShotRequest Request;
+	APawn* OwningPawn = Cast<APawn>(GetOwner());
+	if (APlayerController* PC=Cast<APlayerController>(OwningPawn->GetController()))
+	{
+		FVector EyeLoc;
+		FRotator EyeRot;
+		PC->GetActorEyesViewPoint(EyeLoc, EyeRot);
+		Request.TraceOrigin=EyeLoc;
+		Request.AimDirection=EyeRot.Vector();
+	}
+	Server_RequestFire(Request);
 }
 
 int32 UCombatComponent::AdvanceWeaponIndex()
@@ -290,11 +303,30 @@ void UCombatComponent::FireTimerFinished()
 	}
 }
 
-void UCombatComponent::Server_FireWeapon_Implementation(const FHitResult& Hit)
+void UCombatComponent::Server_RequestFire_Implementation(const FShotRequest& Request)
 {
 	if (!IsValid(CurrentWeapon)) return;
 	if (CurrentWeapon->Ammo <= 0) return;
 	
+	//服务器Trace
+	FCollisionQueryParams QueryParams;
+	QueryParams.bReturnPhysicalMaterial = true;
+	QueryParams.AddIgnoredActor(GetOwner());
+	
+	FCollisionResponseParams ResponseParams;
+	ResponseParams.CollisionResponse.SetAllChannels(ECR_Ignore);
+	ResponseParams.CollisionResponse.SetResponse(ECC_Pawn,ECR_Block);
+	ResponseParams.CollisionResponse.SetResponse(ECC_WorldStatic,ECR_Block);
+	ResponseParams.CollisionResponse.SetResponse(ECC_WorldDynamic,ECR_Block);
+	ResponseParams.CollisionResponse.SetResponse(ECC_PhysicsBody,ECR_Block);
+	
+	const FVector Start = Request.TraceOrigin;
+	const FVector End = Start+Request.AimDirection*TraceLength;
+	
+	FHitResult Hit;
+	GetWorld()->SweepSingleByChannel(Hit,Start,End,FQuat::Identity,FPSTraceChannels::ECC_Weapon,FCollisionShape::MakeSphere(CurrentWeapon->TraceRadius),QueryParams,ResponseParams);
+	
+	//命中
 	const bool bHit = IsValid(Hit.GetActor()) && Hit.GetActor()->Implements<UPlayerInterface>();
 	const bool bHeadShot = Hit.BoneName == "head";
 	bool bLethal = false;
@@ -303,7 +335,7 @@ void UCombatComponent::Server_FireWeapon_Implementation(const FHitResult& Hit)
 	{
 		bLethal = IPlayerInterface::Execute_DoDamage(Hit.GetActor(), CurrentWeapon->Damage, GetOwner());
 	}
-	
+
 	OnRoundReported.Broadcast(GetOwner(), Hit.GetActor(), bHit, bHeadShot, bLethal);
 	
 	if (GetNetMode() != NM_ListenServer || !Cast<APawn>(GetOwner())->IsLocallyControlled())
@@ -312,6 +344,7 @@ void UCombatComponent::Server_FireWeapon_Implementation(const FHitResult& Hit)
 	}
 	
 	Multicast_FireWeapon(Hit, CurrentWeapon->Ammo);
+
 }
 
 void UCombatComponent::Multicast_FireWeapon_Implementation(const FHitResult& Hit, int32 AuthAmmo)

@@ -15,6 +15,8 @@ public class FPS : ModuleRules
 			"Engine", 
 			"InputCore", 
 			"GameplayTags",
+			"GameplayAbilities",
+			"GameplayTasks",
 			"PhysicsCore",
 			"UMG", "Slate", "SlateCore"
 		});
