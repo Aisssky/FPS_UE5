@@ -38,7 +38,7 @@ AWeapon::AWeapon()
 	MagCapacity = 10;
 	Ammo = 5;
 	StartingCarriedAmmo = 10;
-	Sequence = 0;
+	LocalReconcileCount = 0;
 	WeaponStatus = EWeaponStatus::Idle;
 	Damage = 15.f;
 }
@@ -145,7 +145,7 @@ void AWeapon::Local_Fire(const FVector& ImpactPoint, const FVector& ImpactNormal
 		Ammo = FMath::Clamp(Ammo - 1, 0, MagCapacity);
 		if (!GetInstigator()->HasAuthority())
 		{
-			++Sequence;
+			++LocalReconcileCount;
 		}
 	}
 }
@@ -160,8 +160,8 @@ void AWeapon::Rep_Fire(int32 AuthAmmo)
 	if (GetInstigator()->IsLocallyControlled() && !GetInstigator()->HasAuthority())
 	{
 		Ammo = AuthAmmo;
-		--Sequence;
-		Ammo -= Sequence;
+		--LocalReconcileCount;
+		Ammo -= LocalReconcileCount;
 	}
 }
 

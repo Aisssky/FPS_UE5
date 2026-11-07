@@ -8,11 +8,14 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Networking/NetworkTimeSubsystem.h"
+#include "TimerManager.h"
 
 AShooterPlayerController::AShooterPlayerController()
 {
 	bReplicates = true;
 	bPawnAlive = true;
+	TimeSyncInterval = 0.5f;
 }
 
 void AShooterPlayerController::OnRep_PlayerState()
@@ -29,6 +32,36 @@ void AShooterPlayerController::BeginPlay()
 	if (IsValid(Subsystem))
 	{
 		Subsystem->AddMappingContext(ShooterIMC, 0);
+	}
+	
+	//只有远端客户端需要同步时钟（服务器/单机自己就是时间基准）；客户端上只存在自己的 PC
+	if (GetNetMode() == NM_Client)
+	{
+		SendTimeSyncRequest();
+		GetWorldTimerManager().SetTimer(TimeSyncTimer, this, &ThisClass::SendTimeSyncRequest, TimeSyncInterval, true);
+	}
+}
+
+void AShooterPlayerController::SendTimeSyncRequest()
+{
+	if (UNetworkTimeSubsystem* NetTime = UNetworkTimeSubsystem::Get(this))
+	{
+		Server_RequestServerTime(NetTime->GetLocalTime());
+	}
+}
+
+void AShooterPlayerController::Server_RequestServerTime_Implementation(double ClientSendTime)
+{
+	//服务器只负责回填自己的时间，不做任何换算
+	const UWorld* World = GetWorld();
+	Client_ReportServerTime(ClientSendTime, World ? World->GetRealTimeSeconds() : 0.0);
+}
+
+void AShooterPlayerController::Client_ReportServerTime_Implementation(double ClientSendTime, double ServerTime)
+{
+	if (UNetworkTimeSubsystem* NetTime = UNetworkTimeSubsystem::Get(this))
+	{
+		NetTime->RecordRoundTripSample(ClientSendTime, ServerTime, NetTime->GetLocalTime());
 	}
 }
 

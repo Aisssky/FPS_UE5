@@ -7,6 +7,7 @@
 #include "Components/ActorComponent.h"
 #include "GameFramework/Actor.h"
 #include "Combat/ShotRequest.h"
+#include "Combat/ShotResult.h"
 #include "CombatComponent.generated.h"
 
 
@@ -21,6 +22,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAimingStatusChanged, bool, bIsAimin
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FTargetingPlayerStatusChanged, bool, bIsAiming);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCurrentReserveAmmoChanged, int32, RoundsInReserve, int32, RoundsInWeapon, UMaterialInterface*, WeaponIconMaterial);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FRoundReported, AActor*, Attacker, AActor*, Victim, bool, bHit, bool, bHeadShot, bool, bLethal);
+//本地换弹结束（GA_Reload 等它来结束 Ability、移除 State.Reloading）
+DECLARE_MULTICAST_DELEGATE(FLocalReloadFinished);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class FPS_API UCombatComponent : public UActorComponent
@@ -39,7 +42,10 @@ public:
 	void Initiate_CycleWeapon();
 	void Initiate_FireWeapon_Pressed();
 	void Initiate_FireWeapon_Released();
-	void Initiate_ReloadWeapon();
+	//返回 true 表示真的开始换弹了（GA_Reload 据此决定是否继续等待）
+	bool Initiate_ReloadWeapon();
+	//自动换弹统一入口：优先激活 GA_Reload（让 State.Reloading 生效），没有 ASC 时退回旧路径
+	void RequestReload();
 	void Initiate_Aim_Pressed();
 	void Initiate_Aim_Released();
 	
@@ -69,6 +75,8 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FRoundReported OnRoundReported;
 	
+	FLocalReloadFinished OnLocalReloadFinished;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FPS|Weapon")
 	TObjectPtr<UWeaponData> WeaponData;
 	
@@ -94,6 +102,21 @@ public:
 
 	bool bHitPlayer;
 
+	UFUNCTION(Server, Reliable)
+	void Server_RequestFire(const FShotRequest& Request);
+	
+	//构造射击请求：序列号 + 时间采样 + 视角起点/方向（只构造，不做裁决）
+	FShotRequest BuildShotRequest();
+	
+	//本地快速过滤（不能替代服务器校验）
+	bool CanRequestFire() const;
+	
+	float GetTraceLength() const { return TraceLength; }
+	
+	//服务器视角的换弹状态（不依赖 WeaponStatus，那个在 DS 上不可靠）
+	bool IsServerReloading() const { return bServerReloading; }
+	
+	
 protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "FPS|Weapon")
@@ -101,6 +124,11 @@ protected:
 	
 	UFUNCTION()
 	void BlendOut_CycleWeapon(UAnimMontage* Montage, bool bInterrupted);
+	
+	//服务器换弹兜底超时 = 换弹蒙太奇时长 + 这个余量（动画通知没来也能补弹/解锁）
+	UPROPERTY(EditDefaultsOnly, Category = "FPS|Weapon")
+	float ServerReloadTimeoutPadding;
+	
 private:
 	TMap<FGameplayTag, int32> ReserveAmmo;
 	bool bHitPlayerLastFrame;
@@ -129,12 +157,27 @@ private:
 	void Server_FireWeapon(const FHitResult& Hit);
 	*/
 	
-	UFUNCTION(Server, Reliable)
-	void Server_RequestFire(const FShotRequest& Request);
+
 	
-	
+	//只发特效需要的数据（命中点/法线/表面），不再把整个 FHitResult 广播出去
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_FireWeapon(const FHitResult& Hit, int32 AuthAmmo);
+	void Multicast_FireWeapon(const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantizeNormal& ImpactNormal, uint8 SurfaceType, int32 AuthAmmo);
+	
+	//服务器拒绝了这一发：客户端用权威弹药对账（等价于收到一次 Rep_Fire）
+	UFUNCTION(Client, Reliable)
+	void Client_ShotRejected(uint32 ShotSequence, int32 AuthAmmo, EShotRejectReason Reason);
+	
+	//仅服务器：接受射击后扣权威弹药
+	void CommitAuthoritativeAmmoCost();
+	
+	//客户端射击序列号（每次 BuildShotRequest 自增）
+	uint32 LocalShotSequence;
+	
+	//服务器换弹状态 + 兜底计时器
+	bool bServerReloading;
+	FTimerHandle ServerReloadTimer;
+	//仅服务器：真正补弹（动画通知或兜底计时器触发，二者只生效一次）
+	void Auth_CommitReload();
 	
 	UFUNCTION()
 	void OnRep_CurrentReserveAmmo();
@@ -144,6 +187,9 @@ private:
 	
 	int32 AdvanceWeaponIndex();
 	int32 Local_WeaponIndex;
+	
+	//本次切枪是否已经发出过 EquipWeapon（动画通知或 BlendOut 兜底，二者只生效一次）
+	bool bCycleEquipRequested;
 	void Local_CycleWeapon(int32 WeaponIndex);
 	
 	UFUNCTION(Server, Reliable)

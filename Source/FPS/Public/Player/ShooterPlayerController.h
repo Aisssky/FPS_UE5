@@ -25,11 +25,31 @@ public:
 	virtual void OnRep_PlayerState() override;
 	
 	bool bPawnAlive;
+	
+	//时间同步采样间隔（秒），M4 NetworkTime 用
+	UPROPERTY(EditDefaultsOnly, Category = "FPS|NetworkTime")
+	float TimeSyncInterval;
+	
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
 	virtual void OnPossess(APawn* InPawn) override;
+	
+	/*
+	 * 时间同步往返：客户端带上本地发送时间 -> 服务器回填服务器时间 -> 客户端算 RTT/offset
+	 * 用 Unreliable：丢一个样本无所谓，Reliable 重传反而会把 RTT 测大
+	 */
+	UFUNCTION(Server, Unreliable)
+	void Server_RequestServerTime(double ClientSendTime);
+	
+	UFUNCTION(Client, Unreliable)
+	void Client_ReportServerTime(double ClientSendTime, double ServerTime);
+	
 private:
+	
+	FTimerHandle TimeSyncTimer;
+	void SendTimeSyncRequest();
+
 	
 	UPROPERTY(EditAnywhere, Category = "FPS|Input")
 	TObjectPtr<UInputMappingContext> ShooterIMC;

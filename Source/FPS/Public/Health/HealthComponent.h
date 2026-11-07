@@ -33,10 +33,18 @@ public:
 	UFUNCTION(BlueprintCallable)
 	float GetHealthNormalized() const;
 	
-	// return true if lethal
-	bool ChangeHealthByAmount(float Amount, AActor* Instigator);
-	void ChangeMaxHealthByAmount(float Amount, AActor* Instigator);
-	
+	/*
+	 * M7 起 Health 唯一权威是 GAS（UFPSAttributeSet），本组件降级为「镜像 + 死亡状态机」：
+	 * - 旧的 ChangeHealthByAmount/ChangeMaxHealthByAmount 已删除，任何代码都不能再直接改这里的血量
+	 * - Health/MaxHealth 仍复制给拥有者，现有 UI 绑定 OnHealthChanged 不用改
+	 */
+
+	//仅服务器：由 AShooterCharacter::HandleHealthChanged 把 GAS 的值同步过来
+	void SetHealthFromAttribute(float NewHealth, float NewMaxHealth, AActor* Instigator);
+
+	//仅服务器：由 GAS 死亡判定触发（内部有 DeathState 守卫，重复调用无害）
+	void StartDeath();
+
 	UPROPERTY(ReplicatedUsing = OnRep_DeathState)
 	EDeathState DeathState;
 	
@@ -66,8 +74,4 @@ protected:
 	
 	UFUNCTION()
 	void OnRep_MaxHealth(float OldValue);
-	
-private:
-	
-	void StartDeath();
 };

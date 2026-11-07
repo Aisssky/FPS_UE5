@@ -28,19 +28,19 @@ float UHealthComponent::GetHealthNormalized() const
 	return (MaxHealth > 0.f) ? (Health / MaxHealth) : 0.f;
 }
 
-bool UHealthComponent::ChangeHealthByAmount(float Amount, AActor* Instigator)
+void UHealthComponent::SetHealthFromAttribute(float NewHealth, float NewMaxHealth, AActor* Instigator)
 {
-	float OldValue = Health;
-	Health = FMath::Clamp(Health + Amount, 0.f, MaxHealth);
-	OnHealthChanged.Broadcast(this, OldValue, Health, Instigator);
-	
-	if (Health <= 0.f)
+	//只做镜像：值已经由 GAS clamp 过，这里不再计算
+	if (!FMath::IsNearlyEqual(MaxHealth, NewMaxHealth))
 	{
-		StartDeath();
-		return true;
+		const float OldMax = MaxHealth;
+		MaxHealth = NewMaxHealth;
+		OnMaxHealthChanged.Broadcast(this, OldMax, MaxHealth, Instigator);
 	}
-	
-	return false;
+
+	const float OldValue = Health;
+	Health = NewHealth;
+	OnHealthChanged.Broadcast(this, OldValue, Health, Instigator);
 }
 
 void UHealthComponent::StartDeath()
@@ -49,17 +49,10 @@ void UHealthComponent::StartDeath()
 	{
 		return;
 	}
-	
+
 	DeathState = EDeathState::DeathStarted;
 	OnDeathStarted.Broadcast();
 	GetOwner()->ForceNetUpdate();
-}
-
-void UHealthComponent::ChangeMaxHealthByAmount(float Amount, AActor* Instigator)
-{
-	float OldValue = MaxHealth;
-	MaxHealth += Amount;
-	OnMaxHealthChanged.Broadcast(this, OldValue, MaxHealth, Instigator);
 }
 
 void UHealthComponent::BeginPlay()

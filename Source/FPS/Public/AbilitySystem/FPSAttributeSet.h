@@ -14,15 +14,18 @@ UCLASS()
 class FPS_API UFPSAttributeSet : public UAttributeSet
 {
 	GENERATED_BODY()
-	
+
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	
+
 public:
-	
+
+	UFPSAttributeSet();
+
 	UPROPERTY(BlueprintReadOnly,Category="FPS|ASC|State",ReplicatedUsing=OnRep_Health)
 	FGameplayAttributeData Health;
-	
-	UPROPERTY(BlueprintReadOnly,Category="FPS|ASC|State",ReplicatedUsing=OnRep_Health)
+
+	//原来误绑成 OnRep_Health，导致 MaxHealth 变化时写回的是 Health 的预测缓存
+	UPROPERTY(BlueprintReadOnly,Category="FPS|ASC|State",ReplicatedUsing=OnRep_MaxHealth)
 	FGameplayAttributeData MaxHealth;
 	
 	UPROPERTY(BlueprintReadOnly,Category="FPS|ASC|State",ReplicatedUsing=OnRep_Stamina)
@@ -48,5 +51,8 @@ public:
 	void OnRep_MaxStamina(const FGameplayAttributeData& OldMaxStamina)const;
 	
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data)override;
+
+	//Health<=0 时触发死亡（唯一死亡入口），用 State.Dead 标签保证只触发一次
+	void HandleDeathIfNeeded(const FGameplayEffectModCallbackData& Data);
 
 };

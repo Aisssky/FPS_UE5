@@ -5,6 +5,7 @@
 
 #include "EnhancedInputComponent.h"
 #include "TimerManager.h"
+#include "AbilitySystem/FPSAbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
 #include "Combat/CombatComponent.h"
@@ -20,7 +21,16 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Player/ShooterPlayerController.h"
+#include "Player/ShooterPlayerState.h"
 #include "Weapon/Weapon.h"
+#include "AbilitySystem/FPSAbilitySystemComponent.h"
+#include "AbilitySystem/FPSAttributeSet.h"
+#include "AbilitySystem/Abilities/GA_FireWeapon.h"
+#include "AbilitySystem/Abilities/GA_Reload.h"
+#include "Networking/HitValidationComponent.h"
+#include "Networking/LagCompensationComponent.h"
+#include "Tags/ShooterGameplayTags.h"
+
 
 AShooterCharacter::AShooterCharacter()
 {
@@ -65,10 +75,18 @@ AShooterCharacter::AShooterCharacter()
 	
 	Health = CreateDefaultSubobject<UHealthComponent>("Health");
 	Health->SetIsReplicated(true);
-	
+
+	//只在服务器干活，不复制
+	LagCompensation = CreateDefaultSubobject<ULagCompensationComponent>("LagCompensation");
+	HitValidation = CreateDefaultSubobject<UHitValidationComponent>("HitValidation");
+
+	FireWeaponAbilityClass = UGA_FireWeapon::StaticClass();
+	ReloadAbilityClass = UGA_Reload::StaticClass();
+
 	DefaultFieldOfView = 90.0f;
 	TurningStatus = ETurningInPlace::NotTurning;
 	bWeaponFirstReplicated = false;
+	bAbilitySystemInitialized = false;
 	RespawnTime = 3.f;
 }
 
@@ -106,7 +124,6 @@ FRotator AShooterCharacter::GetFixedAimRotation() const
 	FRotator AimRotation = GetBaseAimRotation();
 	if (AimRotation.Pitch > 90.f && !IsLocallyControlled())
 	{
-		// map pitch from [270, 360) to [-90, 0]
 		const FVector2D InRange(270.f, 360.f);
 		const FVector2D OutRange(-90.f, 0.f);
 		AimRotation.Pitch = FMath::GetMappedRangeValueClamped(InRange, OutRange, AimRotation.Pitch);
@@ -248,6 +265,8 @@ void AShooterCharacter::PossessedBy(AController* NewController)
 	{
 		PC->bPawnAlive = true;
 	}
+	
+	InitializeAbilitySystem();
 }
 
 void AShooterCharacter::OnRep_PlayerState()
@@ -263,6 +282,8 @@ void AShooterCharacter::OnRep_PlayerState()
 	{
 		PC->bPawnAlive = true;
 	}
+	
+	InitializeAbilitySystem(); 
 }
 
 FName AShooterCharacter::GetWeaponAttachPoint_Implementation(const FGameplayTag& WeaponType) const
@@ -320,17 +341,54 @@ void AShooterCharacter::AddAmmo_Implementation(const FGameplayTag& WeaponType, i
 
 bool AShooterCharacter::DoDamage_Implementation(float DamageAmount, AActor* DamageInstigator)
 {
-	if (!IsValid(Health)) return false;
-	
-	if (Health->ChangeHealthByAmount(-DamageAmount, DamageInstigator))
+	/*
+	 * 过渡接口（M7）：射击伤害已改走 HitValidation -> GE_Damage，这里不再直接改 HealthComponent
+	 * 保留给非射击来源（陷阱/掉落等）用，同样转发到 GAS，保证 Health 只有一个权威来源
+	 */
+	if (!HasAuthority()) return false;
+
+	const UHitValidationComponent* Validator = UHitValidationComponent::FindHitValidationComponent(DamageInstigator);
+	if (!Validator)
 	{
-		return true; // ChangeHealthByAmount returns true if lethal
+		Validator = HitValidation;
 	}
-	
-	const int32 MontageSelection = FMath::RandRange(0, HitReacts.Num() - 1);
-	Multicast_HitReact(MontageSelection);
-	
-	return false;
+	return Validator ? Validator->ApplyDamageGameplayEffect(this, DamageAmount, nullptr) : false;
+}
+
+UAbilitySystemComponent* AShooterCharacter::GetAbilitySystemComponent() const
+{
+	if (AbilitySystemComponent)
+	{
+		return AbilitySystemComponent;
+	}
+	//还没初始化时直接问 PlayerState
+	const AShooterPlayerState* PS = GetPlayerState<AShooterPlayerState>();
+	return PS ? PS->GetAbilitySystemComponent() : nullptr;
+}
+
+void AShooterCharacter::HandleHealthChanged(float NewHealth, float NewMaxHealth, float Delta, AActor* DamageInstigator)
+{
+	//HealthComponent 现在只是 GAS 的镜像：复制给 UI，不再自己算血
+	if (IsValid(Health))
+	{
+		Health->SetHealthFromAttribute(NewHealth, NewMaxHealth, DamageInstigator);
+	}
+
+	//掉血但没死：播受击（死亡由 HandleOutOfHealth 处理）
+	if (Delta < 0.f && NewHealth > 0.f && HitReacts.Num() > 0)
+	{
+		const int32 MontageSelection = FMath::RandRange(0, HitReacts.Num() - 1);
+		Multicast_HitReact(MontageSelection);
+	}
+}
+
+void AShooterCharacter::HandleOutOfHealth(AActor* DamageInstigator)
+{
+	//驱动原有死亡状态机：DeathState 复制 + OnDeathStarted（销毁武器、重生计时、关碰撞）
+	if (IsValid(Health))
+	{
+		Health->StartDeath();
+	}
 }
 
 void AShooterCharacter::Multicast_HitReact_Implementation(int32 MontageIndex)
@@ -346,6 +404,18 @@ void AShooterCharacter::Multicast_HitReact_Implementation(int32 MontageIndex)
 
 void AShooterCharacter::OnDeathStarted()
 {
+	//死亡打断所有 Ability，避免残留 State.Firing/State.Reloading
+	if (AbilitySystemComponent && AbilitySystemComponent->GetAvatarActor() == this)
+	{
+		AbilitySystemComponent->CancelAllAbilities();
+	}
+	//死后不再参与回溯判定，也不再记录
+	if (IsValid(LagCompensation))
+	{
+		LagCompensation->ClearHistory();
+		LagCompensation->SetComponentTickEnabled(false);
+	}
+
 	if (HasAuthority())
 	{
 		Combat->DestroyInventory();
@@ -377,6 +447,84 @@ void AShooterCharacter::DeathTimerFinished()
 	}
 }
 
+void AShooterCharacter::InitializeAbilitySystem()
+{
+	AShooterPlayerState* PS = GetPlayerState<AShooterPlayerState>();
+	if (!PS)return;
+
+	AbilitySystemComponent=Cast<UFPSAbilitySystemComponent>(PS->GetAbilitySystemComponent());
+	if (!AbilitySystemComponent)return;
+
+	/*
+	 * 幂等守卫：同一个 Character 被 PossessedBy/OnRep_PlayerState 多次调用时，只初始化一次
+	 * 踩坑：最早用「ASC->GetAvatarActor()==this」当守卫，但 DS 实测客户端在 OnRep_PlayerState 之前
+	 * 引擎就已经把 Avatar 绑成了这个角色，守卫直接 return，后面的初始化全被跳过。
+	 * 所以改成角色自己的标记；重生是新的 Character，标记天然是 false
+	 */
+	if (bAbilitySystemInitialized)
+	{
+		return;
+	}
+	bAbilitySystemInitialized = true;
+
+	//引擎可能已经绑过，没绑才绑
+	if (AbilitySystemComponent->GetAvatarActor()!=this)
+	{
+		AbilitySystemComponent->InitAbilityActorInfo(PS,this);
+	}
+
+	AttributeSet=PS->GetAttributeSet();
+
+	//授予/属性初始化只能在服务器做（客户端 GiveAbility 会被引擎拒绝）
+	if (HasAuthority())
+	{
+		GrantDefaultAbilities();
+		InitializeAttributesForSpawn();
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[GAS] %s Init OK Owner=%s Avatar=%s ASC=%s Abilities=%d"),
+	*GetName(),
+	*AbilitySystemComponent->GetOwnerActor()->GetName(),
+	*AbilitySystemComponent->GetAvatarActor()->GetName(),
+	*AbilitySystemComponent->GetName(),
+	AbilitySystemComponent->GetActivatableAbilities().Num());
+}
+
+void AShooterCharacter::GrantDefaultAbilities()
+{
+	/*
+	 * ASC 在 PlayerState 上，重生后已授予的 Ability 还在
+	 * 所以按「这个类有没有授予过」判断，而不是按 Avatar：否则每次重生都会多授予一份
+	 */
+	for (const TSubclassOf<UGameplayAbility>& AbilityClass : { FireWeaponAbilityClass, ReloadAbilityClass })
+	{
+		if (AbilityClass && !AbilitySystemComponent->FindAbilitySpecFromClass(AbilityClass))
+		{
+			FGameplayAbilitySpec Spec(AbilityClass,1,INDEX_NONE);
+			AbilitySystemComponent->GiveAbility(Spec);
+		}
+	}
+}
+
+void AShooterCharacter::InitializeAttributesForSpawn()
+{
+	if (!AttributeSet) return;
+
+	//清掉上一条命的死亡标记（复制的 Loose Tag，客户端也会被清掉）
+	AbilitySystemComponent->SetLooseGameplayTagCount(ShooterTags::TAG_State_Dead, 0, EGameplayTagReplicationState::TagOnly);
+
+	//初始血量沿用 HealthComponent 在蓝图里配置的 MaxHealth（只配一处）
+	const float SpawnMaxHealth = IsValid(Health) ? Health->MaxHealth : 100.f;
+	AbilitySystemComponent->SetNumericAttributeBase(UFPSAttributeSet::GetMaxHealthAttribute(), SpawnMaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UFPSAttributeSet::GetHealthAttribute(), SpawnMaxHealth);
+	AbilitySystemComponent->SetNumericAttributeBase(UFPSAttributeSet::GetStaminaAttribute(), AttributeSet->GetMaxStamina());
+
+	if (IsValid(Health))
+	{
+		Health->SetHealthFromAttribute(SpawnMaxHealth, SpawnMaxHealth, nullptr);
+	}
+}
+
 void AShooterCharacter::Input_CycleWeapon()
 {
 	Combat->Initiate_CycleWeapon();
@@ -384,16 +532,37 @@ void AShooterCharacter::Input_CycleWeapon()
 
 void AShooterCharacter::Input_ReloadWeapon()
 {
-	Combat->Initiate_ReloadWeapon();
+	if (AbilitySystemComponent && ReloadAbilityClass && AbilitySystemComponent->TryActivateAbilityByClass(ReloadAbilityClass))
+	{
+		return;
+	}
+	if (!AbilitySystemComponent)
+	{
+		Combat->Initiate_ReloadWeapon();
+	}
 }
 
 void AShooterCharacter::Input_FireWeapon_Pressed()
 {
+	//按下 = 激活 GA_FireWeapon（换弹中/死亡时会被 Tag 挡住）
+	if (AbilitySystemComponent)
+	{
+		AbilitySystemComponent->TryActivateAbilityByClass(FireWeaponAbilityClass);
+		return;
+	}
+	//ASC 还没初始化（PlayerState 尚未复制到）时的兜底
 	Combat->Initiate_FireWeapon_Pressed();
 }
 
 void AShooterCharacter::Input_FireWeapon_Released()
 {
+	//松开 = 结束 GA_FireWeapon（EndAbility 里会放开扳机）
+	if (AbilitySystemComponent)
+	{
+		const FGameplayTagContainer FireTags(ShooterTags::TAG_Ability_Fire);
+		AbilitySystemComponent->CancelAbilities(&FireTags);
+	}
+	//兜底：Ability 没激活成功时扳机状态也要复位
 	Combat->Initiate_FireWeapon_Released();
 }
 

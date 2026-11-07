@@ -32,6 +32,8 @@ public:
 	UPROPERTY()
 	TObjectPtr<UFPSAttributeSet> AttributeSet;
 	
+	UFPSAttributeSet* GetAttributeSet() const { return AttributeSet; }
+	
 	AShooterPlayerState();
 	
 	UPROPERTY(BlueprintAssignable)

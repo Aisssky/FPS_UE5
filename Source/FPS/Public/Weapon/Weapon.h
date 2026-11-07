@@ -101,7 +101,9 @@ private:
 	
 	void SetMeshVisibilities(APawn* OwningPawn) const;
 	
-	int32 Sequence;
+	//本地弹药对账计数器：客户端预测已开火但服务器尚未确认的发数
+	//（与 FShotRequest::ShotSequence 服务器去重序号是两码事，故改名）
+	int32 LocalReconcileCount;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "FPS|Weapon")
 	TObjectPtr<UMaterialInterface> ReticleMaterial;
