@@ -23,6 +23,8 @@ class UInputAction;
 class AWeapon;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FWeaponFirstReplicated, AWeapon*, Weapon, bool, bTargetingPlayer);
+//S4-4：购买结果回传（UI 订阅，bSuccess=是否购买成功，Reason=失败原因）
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBuyResult, bool, bSuccess, const FString&, Reason);
 
 UCLASS()
 class FPS_API AShooterCharacter : public ACharacter, public IPlayerInterface, public IAbilitySystemInterface
@@ -61,6 +63,10 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void BeginDestroy() override;
+
+	// 临时诊断：蹲伏状态在服务器 / 远端是否真的生效（验证后可删）
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 	
 	//偏航角问题
 	UFUNCTION(BlueprintCallable)
@@ -92,6 +98,31 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "FPS|AbilitySystem")
 	TSubclassOf<UGameplayAbility> ReloadAbilityClass;
+
+	//技能（S3）：烟 + 闪，ServerOnly，服务器权威生成
+	UPROPERTY(EditDefaultsOnly, Category = "FPS|AbilitySystem")
+	TSubclassOf<UGameplayAbility> SkillSmokeAbilityClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FPS|AbilitySystem")
+	TSubclassOf<UGameplayAbility> SkillFlashAbilityClass;
+
+	//S4-4：购买菜单 RPC（客户端 UI 调，服务器权威校验 Buy 阶段 + 钱 + 未购买，扣钱发放）
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "FPS|Buy")
+	void ServerBuyWeapon(TSubclassOf<AWeapon> WeaponClass);
+
+	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "FPS|Buy")
+	void ServerBuyAbility(TSubclassOf<UGameplayAbility> AbilityClass);
+
+	//购买结果回传（客户端 UI 提示成功/失败原因，失败不回滚服务器状态）
+	UFUNCTION(Client, Reliable, Category = "FPS|Buy")
+	void Client_BuyResult(bool bSuccess, const FString& Reason);
+
+	//S4-4：购买结果委托（UI 订阅）
+	UPROPERTY(BlueprintAssignable, Category = "FPS|Buy")
+	FBuyResult OnBuyResult;
+
+	//S4-4：服务器——回合重置购买（移除购买的技能；武器由 Combat::ResetForNewRound 处理）
+	void ResetPurchases();
 
 protected:
 	
@@ -167,6 +198,12 @@ private:
 	void Input_FireWeapon_Released();
 	void Input_Aim_Pressed();
 	void Input_Aim_Released();
+	//技能输入（S3）
+	void Input_SkillSmoke();
+	void Input_SkillFlash();
+
+	//S4-4：读 Ability 的购买价格（CDO 上的 BuyPrice），非烟/闪返回 0
+	int32 GetAbilityBuyPrice(TSubclassOf<UGameplayAbility> AbilityClass) const;
 	
 	void CalculateFABRIKSocketTransform();
 	void CalculateTurnInPlaceParameters(float DeltaTime);
@@ -195,4 +232,10 @@ private:
 	
 	UPROPERTY(EditAnywhere, Category = "FPS|Input")
 	TObjectPtr<UInputAction> AimWeaponAction;
+
+	UPROPERTY(EditAnywhere, Category = "FPS|Input")
+	TObjectPtr<UInputAction> SkillSmokeAction;
+
+	UPROPERTY(EditAnywhere, Category = "FPS|Input")
+	TObjectPtr<UInputAction> SkillFlashAction;
 };

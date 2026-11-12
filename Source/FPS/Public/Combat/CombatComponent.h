@@ -53,6 +53,18 @@ public:
 	void Notify_ReloadWeapon();
 	
 	void AddAmmo(const FGameplayTag& WeaponType, int32 AmmoAmount);
+
+	//S4-4：服务器——是否已拥有某 WeaponType 的武器（购买重复校验）
+	bool HasWeaponOfType(const FGameplayTag& WeaponType) const;
+
+	//S4-4：服务器——购买武器：spawn + 加入 Inventory + 装备（钱/阶段校验由 Character 做）
+	void ServerAddPurchasedWeapon(TSubclassOf<AWeapon> WeaponClass);
+
+	//S4-4：服务器——回合重置装备：销毁所有武器，重新只发默认武器（下回合重买）
+	void ResetForNewRound();
+
+	//S2-5：客户端当前散布半角（度）。准星扩散表现每帧读它；与服务器 HitValidation 读同一份 WeaponAccuracy，保证表现与判定一致
+	float GetCurrentSpreadDegrees() const;
 	
 	UPROPERTY(BlueprintAssignable)
 	FReticleChanged OnReticleChanged;
@@ -162,6 +174,9 @@ private:
 	//只发特效需要的数据（命中点/法线/表面），不再把整个 FHitResult 广播出去
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_FireWeapon(const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantizeNormal& ImpactNormal, uint8 SurfaceType, int32 AuthAmmo);
+
+	//远端玩家触发权威表现 Cue（S1-7）：弹着 + 枪声，走 GameplayCue 通道，本地不双播
+	void TriggerFireCues(AActor* TargetActor, const FVector& ImpactPoint, const FVector& ImpactNormal, EPhysicalSurface SurfaceType);
 	
 	//服务器拒绝了这一发：客户端用权威弹药对账（等价于收到一次 Rep_Fire）
 	UFUNCTION(Client, Reliable)
@@ -184,6 +199,12 @@ private:
 	
 	void Local_Aim(bool bPressed);
 	void Local_FireWeapon();
+
+	//S2-3：本地应用后坐力（读 WeaponRecoil 表，按连发序号取该发 pitch/yaw 偏移叠加到视角）
+	void ApplyLocalRecoil();
+
+	//S2-3：当前连发序号（松手/换枪/换弹归零），索引 WeaponRecoil.Shots
+	int32 RecoilShotIndex;
 	
 	int32 AdvanceWeaponIndex();
 	int32 Local_WeaponIndex;

@@ -53,6 +53,14 @@ struct FReticleParams
 	
 	UPROPERTY(BlueprintReadWrite, EditAnywhere)
 	float TargetingPlayerInterpSpeed = 10.f;
+
+	// S2-5：散布扩散。SpreadScaleMultiplier = 散布半角(度) -> 准星 Scale 的换算系数；
+	// SpreadInterpSpeed = 散布项向目标值插值的速度（越大跟得越紧）
+	UPROPERTY(BlueprintReadWrite, EditAnywhere)
+	float SpreadScaleMultiplier = 0.1f;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere)
+	float SpreadInterpSpeed = 12.f;
 };
 
 UENUM(meta = (BitFlags))

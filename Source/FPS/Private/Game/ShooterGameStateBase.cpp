@@ -3,11 +3,29 @@
 
 #include "Game/ShooterGameStateBase.h"
 
+#include "Net/UnrealNetwork.h"
 #include "Player/ShooterPlayerState.h"
 
 AShooterGameStateBase::AShooterGameStateBase()
 {
 	bHasFirstBloodBeenHad = false;
+
+	RoundState = ERoundState::Warmup;
+	RoundTime = 0.f;
+	RoundNumber = 1;
+	TeamScores.SetNum(2);
+	TeamScores[0] = 0;
+	TeamScores[1] = 0;
+}
+
+void AShooterGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AShooterGameStateBase, RoundState);
+	DOREPLIFETIME(AShooterGameStateBase, RoundTime);
+	DOREPLIFETIME(AShooterGameStateBase, RoundNumber);
+	DOREPLIFETIME(AShooterGameStateBase, TeamScores);
 }
 
 bool AShooterGameStateBase::HasFirstBloodBeenHad() const
@@ -70,4 +88,26 @@ AShooterPlayerState* AShooterGameStateBase::GetSoleLeader() const
 bool AShooterGameStateBase::IsTiedForTheLead(AShooterPlayerState* PlayerState)
 {
 	return Leaders.Contains(PlayerState) && Leaders.Num() > 1;
+}
+
+void AShooterGameStateBase::ServerSetRoundState(ERoundState NewState)
+{
+	if (!HasAuthority()) return;
+	RoundState = NewState;
+	//标记复制，让客户端 OnRep_RoundState 触发
+	ForceNetUpdate();
+	//Listen Server 本地也广播（纯客户端走 OnRep_RoundState）
+	OnRoundStateChanged.Broadcast(NewState);
+}
+
+void AShooterGameStateBase::ServerSetRoundTime(float NewTime)
+{
+	if (!HasAuthority()) return;
+	RoundTime = NewTime;
+}
+
+void AShooterGameStateBase::OnRep_RoundState()
+{
+	//客户端回合阶段变化：蓝图 HUD 监听这个回调做切换（购买菜单/倒计时等）
+	OnRoundStateChanged.Broadcast(RoundState);
 }

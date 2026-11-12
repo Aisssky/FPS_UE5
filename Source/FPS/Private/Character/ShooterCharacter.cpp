@@ -27,6 +27,8 @@
 #include "AbilitySystem/FPSAttributeSet.h"
 #include "AbilitySystem/Abilities/GA_FireWeapon.h"
 #include "AbilitySystem/Abilities/GA_Reload.h"
+#include "AbilitySystem/Abilities/GA_Skill_Smoke.h"
+#include "AbilitySystem/Abilities/GA_Skill_Flash.h"
 #include "Networking/HitValidationComponent.h"
 #include "Networking/LagCompensationComponent.h"
 #include "Tags/ShooterGameplayTags.h"
@@ -36,7 +38,9 @@ AShooterCharacter::AShooterCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	
-	GetCharacterMovement()->MovementState.bCanCrouch = true;
+	// 蹲伏能力由 NavAgentProps（Movement Capabilities）决定：CanEverCrouch() 读的是它。
+	// MovementState 只是运行时状态，会被 ResetMoveState() 从 NavAgentProps 覆盖，在这里赋值不起作用。
+	GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch = true;
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>("SpringArm");
 	SpringArm->SetupAttachment(GetRootComponent());
@@ -82,6 +86,8 @@ AShooterCharacter::AShooterCharacter()
 
 	FireWeaponAbilityClass = UGA_FireWeapon::StaticClass();
 	ReloadAbilityClass = UGA_Reload::StaticClass();
+	SkillSmokeAbilityClass = UGA_Skill_Smoke::StaticClass();
+	SkillFlashAbilityClass = UGA_Skill_Flash::StaticClass();
 
 	DefaultFieldOfView = 90.0f;
 	TurningStatus = ETurningInPlace::NotTurning;
@@ -93,7 +99,13 @@ AShooterCharacter::AShooterCharacter()
 void AShooterCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	// 蓝图 CDO 可能序列化过整个 NavAgentProps 并覆盖 C++ 构造函数里的设置，
+	// 运行时再确认一次：服务器若 CanEverCrouch() 为 false，会一票否决客户端的蹲伏请求。
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	Movement->GetNavAgentPropertiesRef().bCanCrouch = true;
+	Movement->MovementState.bCanCrouch = true;
+
 	Health->OnDeathStarted.AddDynamic(this, &ThisClass::OnDeathStarted);
 	FirstPersonCamera->SetFieldOfView(DefaultFieldOfView);
 	StartingAimRotation = FRotator(0.f, GetBaseAimRotation().Yaw, 0.f);
@@ -107,6 +119,26 @@ void AShooterCharacter::BeginPlay()
 	{
 		Combat->OnRoundReported.AddDynamic(Elimination, &UEliminationComponent::OnRoundReported);
 	}
+}
+
+void AShooterCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+
+	// 临时诊断：服务器 / 远端是否真的进入了蹲伏（远端由 bIsCrouched 复制触发，验证后可删）
+	UE_LOG(LogTemp, Warning, TEXT("[Crouch] START %s Role=%d Authority=%d CapsuleHalfHeight=%.1f"),
+		*GetName(), static_cast<int32>(GetLocalRole()), HasAuthority() ? 1 : 0,
+		GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+}
+
+void AShooterCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+
+	// 临时诊断：验证后可删
+	UE_LOG(LogTemp, Warning, TEXT("[Crouch] END %s Role=%d Authority=%d CapsuleHalfHeight=%.1f"),
+		*GetName(), static_cast<int32>(GetLocalRole()), HasAuthority() ? 1 : 0,
+		GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
 }
 
 void AShooterCharacter::BeginDestroy()
@@ -251,6 +283,8 @@ void AShooterCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	ShooterInputComponent->BindAction(AimWeaponAction, ETriggerEvent::Started, this, &ThisClass::Input_Aim_Pressed);
 	ShooterInputComponent->BindAction(AimWeaponAction, ETriggerEvent::Completed, this, &ThisClass::Input_Aim_Released);
 	ShooterInputComponent->BindAction(ReloadWeaponAction, ETriggerEvent::Started, this, &ThisClass::Input_ReloadWeapon);
+	ShooterInputComponent->BindAction(SkillSmokeAction, ETriggerEvent::Started, this, &ThisClass::Input_SkillSmoke);
+	ShooterInputComponent->BindAction(SkillFlashAction, ETriggerEvent::Started, this, &ThisClass::Input_SkillFlash);
 }
 
 void AShooterCharacter::PossessedBy(AController* NewController)
@@ -419,7 +453,22 @@ void AShooterCharacter::OnDeathStarted()
 	if (HasAuthority())
 	{
 		Combat->DestroyInventory();
-		GetWorld()->GetTimerManager().SetTimer(DeathTimer, this, &ThisClass::DeathTimerFinished, RespawnTime);
+
+		//回合制（S4-6）：死亡通知 GameMode 判定团灭，不再自己计时重生
+		if (AShooterGameModeBase* GM = Cast<AShooterGameModeBase>(UGameplayStatics::GetGameMode(this)))
+		{
+			AController* KillerController = nullptr;
+			if (const AShooterPlayerState* PS = GetPlayerState<AShooterPlayerState>())
+			{
+				KillerController = PS->GetLastAttacker() ? PS->GetLastAttacker()->GetOwningController() : nullptr;
+			}
+			GM->OnPlayerDeath(GetController(), KillerController);
+		}
+		else
+		{
+			//非回合制兜底：退回旧的即时重生
+			GetWorld()->GetTimerManager().SetTimer(DeathTimer, this, &ThisClass::DeathTimerFinished, RespawnTime);
+		}
 	}
 	if (GetNetMode() != NM_DedicatedServer)
 	{
@@ -495,6 +544,7 @@ void AShooterCharacter::GrantDefaultAbilities()
 	/*
 	 * ASC 在 PlayerState 上，重生后已授予的 Ability 还在
 	 * 所以按「这个类有没有授予过」判断，而不是按 Avatar：否则每次重生都会多授予一份
+	 * S4-4：只授予默认的 Fire/Reload；烟/闪改为 Buy 阶段购买解锁（ServerBuyAbility）
 	 */
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : { FireWeaponAbilityClass, ReloadAbilityClass })
 	{
@@ -503,6 +553,155 @@ void AShooterCharacter::GrantDefaultAbilities()
 			FGameplayAbilitySpec Spec(AbilityClass,1,INDEX_NONE);
 			AbilitySystemComponent->GiveAbility(Spec);
 		}
+	}
+}
+
+// ===== S4-4 购买系统 =====
+
+int32 AShooterCharacter::GetAbilityBuyPrice(TSubclassOf<UGameplayAbility> AbilityClass) const
+{
+	if (!AbilityClass) return 0;
+
+	if (AbilityClass == SkillSmokeAbilityClass)
+	{
+		const UGA_Skill_Smoke* CDO = GetDefault<UGA_Skill_Smoke>(AbilityClass);
+		return CDO ? CDO->BuyPrice : 0;
+	}
+	if (AbilityClass == SkillFlashAbilityClass)
+	{
+		const UGA_Skill_Flash* CDO = GetDefault<UGA_Skill_Flash>(AbilityClass);
+		return CDO ? CDO->BuyPrice : 0;
+	}
+	return 0;
+}
+
+void AShooterCharacter::ServerBuyWeapon_Implementation(TSubclassOf<AWeapon> WeaponClass)
+{
+	if (!HasAuthority() || !WeaponClass || !Combat) return;
+
+	AShooterPlayerState* PS = GetPlayerState<AShooterPlayerState>();
+	if (!PS) return;
+
+	//1. 只在 Buy 阶段可买
+	if (const AShooterGameStateBase* GS = GetWorld()->GetGameState<AShooterGameStateBase>())
+	{
+		if (GS->RoundState != ERoundState::Buy)
+		{
+			Client_BuyResult(false, TEXT("Not in Buy phase"));
+			return;
+		}
+	}
+
+	//2. 读价格（CDO 读 WeaponType，查 WeaponPrices）
+	const AWeapon* CDO = GetDefault<AWeapon>(WeaponClass);
+	if (!CDO) return;
+	const FGameplayTag WeaponType = CDO->WeaponType;
+
+	int32 Price = 0;
+	if (Combat->WeaponData)
+	{
+		Price = Combat->WeaponData->WeaponPrices.FindRef(WeaponType);
+	}
+	if (Price <= 0)
+	{
+		Client_BuyResult(false, TEXT("No price configured"));
+		return;
+	}
+
+	//3. 已拥有？不重复购买
+	if (Combat->HasWeaponOfType(WeaponType))
+	{
+		Client_BuyResult(false, TEXT("Already owned"));
+		return;
+	}
+
+	//4. 钱够？
+	if (PS->Money < Price)
+	{
+		Client_BuyResult(false, TEXT("Not enough money"));
+		return;
+	}
+
+	//5. 扣钱 + 发放
+	PS->Money -= Price;
+	Combat->ServerAddPurchasedWeapon(WeaponClass);
+
+	Client_BuyResult(true, TEXT("Purchased"));
+}
+
+void AShooterCharacter::ServerBuyAbility_Implementation(TSubclassOf<UGameplayAbility> AbilityClass)
+{
+	if (!HasAuthority() || !AbilityClass || !AbilitySystemComponent) return;
+
+	AShooterPlayerState* PS = GetPlayerState<AShooterPlayerState>();
+	if (!PS) return;
+
+	//1. 只在 Buy 阶段可买
+	if (const AShooterGameStateBase* GS = GetWorld()->GetGameState<AShooterGameStateBase>())
+	{
+		if (GS->RoundState != ERoundState::Buy)
+		{
+			Client_BuyResult(false, TEXT("Not in Buy phase"));
+			return;
+		}
+	}
+
+	//2. 读价格
+	const int32 Price = GetAbilityBuyPrice(AbilityClass);
+	if (Price <= 0)
+	{
+		Client_BuyResult(false, TEXT("No price configured"));
+		return;
+	}
+
+	//3. 已拥有？
+	if (AbilitySystemComponent->FindAbilitySpecFromClass(AbilityClass))
+	{
+		Client_BuyResult(false, TEXT("Already owned"));
+		return;
+	}
+
+	//4. 钱够？
+	if (PS->Money < Price)
+	{
+		Client_BuyResult(false, TEXT("Not enough money"));
+		return;
+	}
+
+	//5. 扣钱 + 发放
+	PS->Money -= Price;
+	FGameplayAbilitySpec Spec(AbilityClass, 1, INDEX_NONE);
+	AbilitySystemComponent->GiveAbility(Spec);
+
+	Client_BuyResult(true, TEXT("Purchased"));
+}
+
+void AShooterCharacter::Client_BuyResult_Implementation(bool bSuccess, const FString& Reason)
+{
+	OnBuyResult.Broadcast(bSuccess, Reason);
+}
+
+void AShooterCharacter::ResetPurchases()
+{
+	if (!HasAuthority()) return;
+
+	//移除购买的技能（烟/闪），下回合重新买
+	if (AbilitySystemComponent)
+	{
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : { SkillSmokeAbilityClass, SkillFlashAbilityClass })
+		{
+			if (!AbilityClass) continue;
+			if (FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromClass(AbilityClass))
+			{
+				AbilitySystemComponent->ClearAbility(Spec->Handle);
+			}
+		}
+	}
+
+	//重置武器（销毁所有，重新只发默认武器）
+	if (Combat)
+	{
+		Combat->ResetForNewRound();
 	}
 }
 
@@ -576,4 +775,21 @@ void AShooterCharacter::Input_Aim_Released()
 {
 	Combat->Initiate_Aim_Released();
 	OnAim(false);
+}
+
+void AShooterCharacter::Input_SkillSmoke()
+{
+	//技能走 Ability：CommitAbility 在服务器做 Cost/Cooldown 原子检查
+	if (AbilitySystemComponent && SkillSmokeAbilityClass)
+	{
+		AbilitySystemComponent->TryActivateAbilityByClass(SkillSmokeAbilityClass);
+	}
+}
+
+void AShooterCharacter::Input_SkillFlash()
+{
+	if (AbilitySystemComponent && SkillFlashAbilityClass)
+	{
+		AbilitySystemComponent->TryActivateAbilityByClass(SkillFlashAbilityClass);
+	}
 }

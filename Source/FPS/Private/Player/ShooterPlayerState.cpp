@@ -7,6 +7,7 @@
 #include "TimerManager.h"
 #include "Data/SpecialElimData.h"
 #include "UI/Elims/SpecialElim.h"
+#include "Net/UnrealNetwork.h"
 
 UAbilitySystemComponent* AShooterPlayerState::GetAbilitySystemComponent() const
 {
@@ -31,11 +32,28 @@ AShooterPlayerState::AShooterPlayerState()
 	bWinner = false;
 	bIsProcessingQueue = false;
 	ElimDisplayTime = 0.5f;
+
+	//S4 回合：初始无队伍、初始经济
+	TeamID = 0;
+	Money = 800;
 	
 	AbilitySystemComponent=CreateDefaultSubobject<UFPSAbilitySystemComponent>("AbilitySystemComponent");
 	AbilitySystemComponent->SetIsReplicated(true);
 	AttributeSet = CreateDefaultSubobject<UFPSAttributeSet>("AttributeSet");
 
+}
+
+void AShooterPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AShooterPlayerState, TeamID);
+	DOREPLIFETIME(AShooterPlayerState, Money);
+}
+
+void AShooterPlayerState::OnRep_Money()
+{
+	OnMoneyChanged.Broadcast(Money);
 }
 
 void AShooterPlayerState::AddScoredElim()

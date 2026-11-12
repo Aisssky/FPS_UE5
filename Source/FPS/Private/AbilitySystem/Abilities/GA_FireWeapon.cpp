@@ -22,6 +22,8 @@ UGA_FireWeapon::UGA_FireWeapon()
 	//换弹中、死亡时不能开火
 	ActivationBlockedTags.AddTag(ShooterTags::TAG_State_Reloading);
 	ActivationBlockedTags.AddTag(ShooterTags::TAG_State_Dead);
+	//被闪光致盲时不能开火（S3-6）
+	ActivationBlockedTags.AddTag(ShooterTags::TAG_State_Blinded);
 }
 
 UCombatComponent* UGA_FireWeapon::GetCombat(const FGameplayAbilityActorInfo* ActorInfo)

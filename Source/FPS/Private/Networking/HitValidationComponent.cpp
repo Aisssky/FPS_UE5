@@ -5,14 +5,17 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
+#include "AbilitySystem/Skills/SkillSmokeActor.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "AbilitySystem/Effects/GE_Damage.h"
 #include "Combat/CombatComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Data/WeaponData.h"
 #include "Engine/World.h"
 #include "FPS/FPS.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
@@ -78,6 +81,11 @@ FShotResult UHitValidationComponent::ValidateAndProcessShot(const FShotRequest& 
 
 	const double ServerReceiveTime = GetWorld()->GetRealTimeSeconds();
 
+	//服务器时间戳容差（毫秒）：服务器允许 ClientShotTime 超前的上界，日志里 EstimatedOffset 的取值
+	//提前到这里取，让下面所有拒绝分支的 LogShot 都能拿到（§17.1 字段补齐）
+	UNetworkTimeSubsystem* NetTime = UNetworkTimeSubsystem::Get(this);
+	const float ServerTimeOffsetMs = NetTime ? NetTime->FutureToleranceSeconds * 1000.f : 0.f;
+
 	//只允许服务器执行
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -90,7 +98,7 @@ FShotResult UHitValidationComponent::ValidateAndProcessShot(const FShotRequest& 
 	if (!ValidateShotRequest(Request, RequestingController, Reason))
 	{
 		RejectShot(Result, Reason);
-		LogShot(Request, Result, ServerReceiveTime);
+		LogShot(Request, Result, ServerReceiveTime, ServerTimeOffsetMs);
 		return Result;
 	}
 
@@ -100,14 +108,13 @@ FShotResult UHitValidationComponent::ValidateAndProcessShot(const FShotRequest& 
 
 	//6：时间戳换算
 	//ClientShotTime==0 表示客户端还没完成时钟同步：降级为按收包时刻判定（不回溯，只会对客户端自己不利，不构成作弊点）
-	UNetworkTimeSubsystem* NetTime = UNetworkTimeSubsystem::Get(this);
 	double ServerShotTime = ServerReceiveTime;
 	float EstimatedErrorMs = 0.f;
 	const bool bHasClientTime = Request.ClientShotTime != 0.0;
 	if (bHasClientTime && NetTime && !NetTime->ConvertClientShotTimeToServerTime(Request.ClientShotTime, ServerShotTime, EstimatedErrorMs))
 	{
 		RejectShot(Result, EShotRejectReason::TimestampTooOld);
-		LogShot(Request, Result, ServerReceiveTime);
+		LogShot(Request, Result, ServerReceiveTime, ServerTimeOffsetMs);
 		return Result;
 	}
 
@@ -115,7 +122,7 @@ FShotResult UHitValidationComponent::ValidateAndProcessShot(const FShotRequest& 
 	if (NetTime && !NetTime->IsShotTimeWithinAllowedWindow(ServerShotTime, ServerReceiveTime, Reason))
 	{
 		RejectShot(Result, Reason);
-		LogShot(Request, Result, ServerReceiveTime);
+		LogShot(Request, Result, ServerReceiveTime, ServerTimeOffsetMs);
 		return Result;
 	}
 	Result.ValidatedServerShotTime = ServerShotTime;
@@ -132,13 +139,13 @@ FShotResult UHitValidationComponent::ValidateAndProcessShot(const FShotRequest& 
 		if (ServerShotTime + KINDA_SMALL_NUMBER < LastAcceptedShotTime)
 		{
 			RejectShot(Result, EShotRejectReason::TimestampTooOld);
-			LogShot(Request, Result, ServerReceiveTime);
+			LogShot(Request, Result, ServerReceiveTime, ServerTimeOffsetMs);
 			return Result;
 		}
 		if (ServerShotTime - LastAcceptedShotTime < Weapon->FireTime * FireRateTolerance)
 		{
 			RejectShot(Result, EShotRejectReason::FireRateExceeded);
-			LogShot(Request, Result, ServerReceiveTime);
+			LogShot(Request, Result, ServerReceiveTime, ServerTimeOffsetMs);
 			return Result;
 		}
 	}
@@ -190,7 +197,7 @@ FShotResult UHitValidationComponent::ValidateAndProcessShot(const FShotRequest& 
 	}
 
 	//12：返回权威结果，由 CombatComponent 广播
-	LogShot(Request, Result, ServerReceiveTime);
+	LogShot(Request, Result, ServerReceiveTime, ServerTimeOffsetMs);
 	return Result;
 }
 
@@ -266,6 +273,108 @@ bool UHitValidationComponent::ValidateShotRequest(const FShotRequest& Request, A
 	return true;
 }
 
+float UHitValidationComponent::ComputeSpreadDegrees(const FShotRequest& Request) const
+{
+	/*
+	 * S2-2：服务器侧散布角（度，半角）
+	 * 数据源 = UWeaponData::WeaponAccuracy[WeaponType]；按姿态（蹲伏/瞄准）乘倍率，
+	 * 按移动速度（CMC 的 Velocity 水平分量）线性过渡 MoveSpread，
+	 * 空中加 AirSpread，连发 Bloom 由「距上一发接受的时间」近似衰减（不做精确连发序号追踪，
+	 * 精度对命中判定够用，且避免引入跨请求有状态计数）
+	 */
+	const UCombatComponent* Combat = GetCombat();
+	if (!Combat || !IsValid(Combat->CurrentWeapon) || !IsValid(Combat->WeaponData))
+	{
+		return 0.f;
+	}
+
+	const FGameplayTag WeaponType = Combat->CurrentWeapon->WeaponType;
+	const FWeaponAccuracy* Accuracy = Combat->WeaponData->WeaponAccuracy.Find(WeaponType);
+	if (!Accuracy)
+	{
+		//未配置散布：走旧路径，服务器不扰动
+		return 0.f;
+	}
+
+	const APawn* OwningPawn = Cast<APawn>(GetOwner());
+	const ACharacter* Character = Cast<ACharacter>(OwningPawn);
+	const UCharacterMovementComponent* CMC = Character ? Character->GetCharacterMovement() : nullptr;
+
+	float Spread = Accuracy->BaseSpreadDegrees;
+
+	//移动：按速度线性过渡到 MoveSpread
+	if (CMC)
+	{
+		const float Speed2D = FVector(CMC->Velocity.X, CMC->Velocity.Y, 0.f).Size();
+		const float WalkSpeed = CMC->GetMaxSpeed();
+		const float MoveFactor = WalkSpeed > KINDA_SMALL_NUMBER ? FMath::Clamp(Speed2D / WalkSpeed, 0.f, 1.f) : 0.f;
+		Spread += Accuracy->MoveSpreadDegrees * MoveFactor;
+
+		if (CMC->IsFalling())
+		{
+			Spread += Accuracy->AirSpreadDegrees;
+		}
+	}
+
+	//蹲伏收束
+	if (Character && Character->bIsCrouched)
+	{
+		Spread *= Accuracy->CrouchSpreadMultiplier;
+	}
+
+	//瞄准收束（bAiming 由 CombatComponent 复制）
+	if (Combat->bAiming)
+	{
+		Spread *= Accuracy->AimSpreadMultiplier;
+	}
+
+	//连发 Bloom：距上一发接受越近，散布越大（近似，不做精确序号）
+	if (bHasAcceptedShot)
+	{
+		const double SinceLast = GetWorld()->GetRealTimeSeconds() - LastAcceptedShotTime;
+		const float Decay = FMath::Clamp(static_cast<float>(SinceLast) * Accuracy->BloomRecoveryPerSecond, 0.f, 1.f);
+		//Bloom = 上一发留下的 bloom * (1 - 衰减) + 本发累加；无持久状态，用「距上一发时间」估算
+		//简化：只加一次 per-shot bloom，随距上一发时间线性衰减到 0
+		const float Bloom = Accuracy->BloomPerShotDegrees * (1.f - Decay);
+		Spread += Bloom;
+	}
+
+	return FMath::Min(Spread, Accuracy->MaxBloomDegrees);
+}
+
+FVector UHitValidationComponent::ApplySpreadToDirection(const FShotRequest& Request, const FVector& BaseDirection) const
+{
+	/*
+	 * S2-4：确定性散布扰动
+	 * 用 Request.SpreadSeed 构造 FRandomStream，客户端预测用同种子得到相同扰动 → 服务器复现
+	 * 扰动 = 绕任意轴旋转 [0, SpreadDegrees] 内的角度；用两个均匀随机数做成「圆锥内均匀」采样
+	 * SpreadSeed==0 或散布角==0 → 直接返回原方向（不扰动）
+	 */
+	const float SpreadDegrees = ComputeSpreadDegrees(Request);
+	if (SpreadDegrees <= 0.f || Request.SpreadSeed == 0)
+	{
+		return BaseDirection;
+	}
+
+	FRandomStream Stream(Request.SpreadSeed);
+	//均匀分布在 [0, SpreadDegrees] 的角，和 [0,360) 的方位角
+	const float Angle = FMath::DegreesToRadians(Stream.FRand() * SpreadDegrees);
+	const float Azimuth = FMath::DegreesToRadians(Stream.FRand() * 360.f);
+
+	//构建一个以 BaseDirection 为 Z 轴的正交基
+	const FVector Forward = BaseDirection.GetSafeNormal();
+	FVector Up = (FMath::Abs(Forward.Z) < 0.99f) ? FVector::UpVector : FVector::ForwardVector;
+	const FVector Right = FVector::CrossProduct(Forward, Up).GetSafeNormal();
+	const FVector NewUp = FVector::CrossProduct(Right, Forward).GetSafeNormal();
+
+	//在圆锥上：先绕 Forward 转 Azimuth，再偏离 Angle
+	const FVector OffsetDir = Forward * FMath::Cos(Angle)
+		+ Right * FMath::Sin(Angle) * FMath::Cos(Azimuth)
+		+ NewUp * FMath::Sin(Angle) * FMath::Sin(Azimuth);
+
+	return OffsetDir.GetSafeNormal();
+}
+
 bool UHitValidationComponent::PerformCurrentWorldTrace(const FShotRequest& Request, FHitResult& OutHit) const
 {
 	const UCombatComponent* Combat = GetCombat();
@@ -284,14 +393,16 @@ bool UHitValidationComponent::PerformCurrentWorldTrace(const FShotRequest& Reque
 	ResponseParams.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Block);
 
 	const FVector Start = Request.TraceOrigin;
-	const FVector End = Start + FVector(Request.AimDirection) * Combat->GetTraceLength();
+	//S2-4：先施加确定性散布扰动，再 trace（服务器权威，与客户端预测同种子复现）
+	const FVector Dir = ApplySpreadToDirection(Request, FVector(Request.AimDirection));
+	const FVector End = Start + Dir * Combat->GetTraceLength();
 
 	const bool bHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, FPSTraceChannels::ECC_Weapon,
 		FCollisionShape::MakeSphere(Combat->CurrentWeapon->TraceRadius), QueryParams, ResponseParams);
 	if (!bHit)
 	{
 		OutHit.ImpactPoint = End;
-		OutHit.ImpactNormal = -FVector(Request.AimDirection);
+		OutHit.ImpactNormal = -Dir;
 	}
 	return bHit;
 }
@@ -302,7 +413,8 @@ bool UHitValidationComponent::PerformRewindTrace(const FShotRequest& Request, do
 	if (!IsValid(Combat) || !IsValid(Combat->CurrentWeapon)) return false;
 
 	const FVector Start = Request.TraceOrigin;
-	const FVector Dir = Request.AimDirection;
+	//S2-4：回溯 trace 同样先施加确定性散布，与当前世界 trace 一致
+	const FVector Dir = ApplySpreadToDirection(Request, FVector(Request.AimDirection));
 	const float TraceLength = Combat->GetTraceLength();
 	const float TraceRadius = Combat->CurrentWeapon->TraceRadius;
 	const bool bDrawDebug = CVarSSRDrawDebug.GetValueOnGameThread() != 0;
@@ -324,7 +436,18 @@ bool UHitValidationComponent::PerformRewindTrace(const FShotRequest& Request, do
 	FHitResult WorldHit;
 	const FVector End = Start + Dir * TraceLength;
 	const bool bWorldBlocked = GetWorld()->LineTraceSingleByChannel(WorldHit, Start, End, FPSTraceChannels::ECC_Weapon, QueryParams, WorldResponse);
-	const float BlockDistance = bWorldBlocked ? WorldHit.Distance : TraceLength;
+	float BlockDistance = bWorldBlocked ? WorldHit.Distance : TraceLength;
+
+	/*
+	 * S3-5 动态遮挡回溯：烟雾不参与物理 trace，这里单独查「射击时刻已存在的烟雾」是否挡住射线
+	 * 比世界 trace 更近就缩短 BlockDistance，让「躲进烟后不被打中」在回溯下成立
+	 * 局限（沿用 §15.6）：可破坏墙/移动门仍未回溯，只补了烟雾这一种动态遮挡
+	 */
+	const float SmokeBlockDistance = FindSmokeBlockDistance(Start, Dir, BlockDistance, ValidatedServerShotTime);
+	if (SmokeBlockDistance >= 0.f && SmokeBlockDistance < BlockDistance)
+	{
+		BlockDistance = SmokeBlockDistance;
+	}
 
 	//默认结果：打在墙上或打空
 	OutResult.HitActor = nullptr;
@@ -416,6 +539,34 @@ bool UHitValidationComponent::PerformRewindTrace(const FShotRequest& Request, do
 	return true;
 }
 
+float UHitValidationComponent::FindSmokeBlockDistance(const FVector& Start, const FVector& Dir, float MaxDistance, double ShotServerTime) const
+{
+	/*
+	 * S3-5：遍历烟雾 Actor，只统计「射击时刻已经存在」的烟雾（IsActiveAtTime 回溯判定）
+	 * 对每条射线做射线-球求交，取最近的遮挡距离；无遮挡返回 -1
+	 * 烟雾由服务器权威生成，SpawnServerTime/ExpireServerTime 在服务器上是精确的
+	 */
+	const UWorld* World = GetWorld();
+	if (!World) return -1.f;
+
+	float BestDistance = -1.f;
+	for (TActorIterator<ASkillSmokeActor> It(World); It; ++It)
+	{
+		const ASkillSmokeActor* Smoke = *It;
+		if (!IsValid(Smoke) || !Smoke->IsActiveAtTime(ShotServerTime)) continue;
+
+		float Distance = 0.f;
+		if (Smoke->BlocksLine(Start, Dir, MaxDistance, Distance))
+		{
+			if (BestDistance < 0.f || Distance < BestDistance)
+			{
+				BestDistance = Distance;
+			}
+		}
+	}
+	return BestDistance;
+}
+
 bool UHitValidationComponent::RayIntersectsHitbox(const FVector& Start, const FVector& Dir, float MaxDistance, const FHistoricalHitbox& Box, float Inflate, float& OutDistance)
 {
 	/*
@@ -499,7 +650,7 @@ bool UHitValidationComponent::ApplyDamageGameplayEffect(AActor* Target, float Da
 	return TargetASC->HasMatchingGameplayTag(ShooterTags::TAG_State_Dead);
 }
 
-void UHitValidationComponent::LogShot(const FShotRequest& Request, const FShotResult& Result, double ServerReceiveTime) const
+void UHitValidationComponent::LogShot(const FShotRequest& Request, const FShotResult& Result, double ServerReceiveTime, float EstimatedOffsetMs) const
 {
 	if (Result.bAccepted && CVarShotLog.GetValueOnGameThread() == 0) return;
 
@@ -508,10 +659,16 @@ void UHitValidationComponent::LogShot(const FShotRequest& Request, const FShotRe
 	const UCombatComponent* Combat = GetCombat();
 	const AWeapon* Weapon = Combat ? Combat->CurrentWeapon.Get() : nullptr;
 
-	//§17.1 诊断字段
+	/*
+	 * §17.1 诊断字段。RTT / EstimatedOffset 两个是「服务器裁决视角」的补充：
+	 * - RTT：射手的 Ping（PlayerState 复制的往返延迟）。服务器端 NetworkTimeSubsystem 不采样，
+	 *   EstimatedRoundTripTime 恒为 0，所以这里只能用 Ping 作为服务器能拿到的往返延迟。
+	 * - EstimatedOffset：服务器允许时间戳超前/落后的容差上界（FutureToleranceSeconds），
+	 *   即服务器视角的时间戳误差容忍，不是客户端本地时钟偏移（那个值服务器拿不到）。
+	 */
 	UE_LOG(LogTemp, Warning,
-		TEXT("[HitValidation] Player=%d Seq=%u Weapon=%s ClientShotTime=%.4f ServerReceiveTime=%.4f ValidatedShotTime=%.4f RewindAge=%.1fms Ping=%.0fms ")
-		TEXT("Origin=%s Dir=%s Target=%s Hitbox=%s Impact=%s Damage=%.1f Lethal=%d Rewind=%d Accepted=%d Reason=%s"),
+		TEXT("[HitValidation] Player=%d Seq=%u Weapon=%s ClientShotTime=%.4f ServerReceiveTime=%.4f ValidatedShotTime=%.4f RewindAge=%.1fms ")
+		TEXT("RTT=%.0fms EstimatedOffset=%.1fms Origin=%s Dir=%s Target=%s Hitbox=%s Impact=%s Damage=%.1f Lethal=%d Rewind=%d Accepted=%d Reason=%s"),
 		PS ? PS->GetPlayerId() : -1,
 		Request.ShotSequence,
 		*GetNameSafe(Weapon),
@@ -520,6 +677,7 @@ void UHitValidationComponent::LogShot(const FShotRequest& Request, const FShotRe
 		Result.ValidatedServerShotTime,
 		Result.bAccepted ? (ServerReceiveTime - Result.ValidatedServerShotTime) * 1000.0 : 0.0,
 		PS ? PS->GetPingInMilliseconds() : 0.f,
+		EstimatedOffsetMs,
 		*FVector(Request.TraceOrigin).ToCompactString(),
 		*FVector(Request.AimDirection).ToCompactString(),
 		*GetNameSafe(Result.HitActor),

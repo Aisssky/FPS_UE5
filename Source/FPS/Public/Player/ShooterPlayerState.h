@@ -17,6 +17,8 @@ class UFPSAttributeSet;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FScoreChanged, int32, NewScore);
+//S4-4：金钱变化广播（客户端 UI 订阅，服务器直接改 Money 触发复制 + OnRep）
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMoneyChanged, int32, NewMoney);
 
 UCLASS()
 class FPS_API AShooterPlayerState : public APlayerState,public IAbilitySystemInterface
@@ -35,6 +37,23 @@ public:
 	UFPSAttributeSet* GetAttributeSet() const { return AttributeSet; }
 	
 	AShooterPlayerState();
+	
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	//队伍 ID（S4-3）：0=未分配，1=攻击方，2=防守方；服务器在比赛开始分配
+	UPROPERTY(BlueprintReadOnly, Replicated, Category = "FPS|Team")
+	int32 TeamID;
+
+	//经济（S4-4）：击杀/回合胜负/败方补偿结算，购买武器/技能消耗；服务器权威
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Money, Category = "FPS|Economy")
+	int32 Money;
+
+	//金钱变化（客户端 UI 订阅，不轮询）
+	UPROPERTY(BlueprintAssignable, Category = "FPS|Economy")
+	FMoneyChanged OnMoneyChanged;
+
+	UFUNCTION()
+	void OnRep_Money();
 	
 	UPROPERTY(BlueprintAssignable)
 	FScoreChanged OnScoreChanged;

@@ -74,11 +74,20 @@ private:
 
 	FShotResult& RejectShot(FShotResult& Result, EShotRejectReason Reason) const;
 
-	//§17.1 诊断字段日志（fps.Shot.Log 控制）
-	void LogShot(const FShotRequest& Request, const FShotResult& Result, double ServerReceiveTime) const;
+	//§17.1 诊断字段日志（fps.Shot.Log 控制）。EstimatedOffsetMs 为服务器时间戳容差（毫秒），见实现注释
+	void LogShot(const FShotRequest& Request, const FShotResult& Result, double ServerReceiveTime, float EstimatedOffsetMs) const;
 
 	//射线 vs 有向盒（盒子尺寸按 TraceRadius 膨胀近似球形 sweep），命中返回进入距离
 	static bool RayIntersectsHitbox(const FVector& Start, const FVector& Dir, float MaxDistance, const FHistoricalHitbox& Box, float Inflate, float& OutDistance);
+
+	//S2-4：服务器对射击方向施加确定性散布扰动（用 Request.SpreadSeed 复现客户端预测），返回扰动后的方向
+	FVector ApplySpreadToDirection(const FShotRequest& Request, const FVector& BaseDirection) const;
+
+	//S2-2：计算当前姿态/移动/连发状态下的散布半角（度），读 UWeaponData::WeaponAccuracy
+	float ComputeSpreadDegrees(const FShotRequest& Request) const;
+
+	//S3-5：查询射击时刻的烟雾遮挡——返回烟雾遮挡的最近距离，无遮挡返回 -1
+	float FindSmokeBlockDistance(const FVector& Start, const FVector& Dir, float MaxDistance, double ShotServerTime) const;
 
 	UCombatComponent* GetCombat() const;
 

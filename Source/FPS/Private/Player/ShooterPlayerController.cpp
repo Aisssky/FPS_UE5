@@ -84,30 +84,55 @@ void AShooterPlayerController::OnPossess(APawn* InPawn)
 
 void AShooterPlayerController::Input_Crouch()
 {
-	if (!IsValid(GetCharacter())) return;
+	// 不能用 Character 作变量名：AController 已有同名成员，会触发 C4458（项目将警告视为错误）
+	ACharacter* ControlledCharacter = GetCharacter();
+	if (!IsValid(ControlledCharacter)) return;
 	if (!bPawnAlive) return;
-	
-	if (UCharacterMovementComponent* CMC = GetCharacter()->GetCharacterMovement(); IsValid(CMC))
+
+	UCharacterMovementComponent* CMC = ControlledCharacter->GetCharacterMovement();
+	if (!IsValid(CMC)) return;
+
+	// 临时诊断：确认本端蹲伏能力是否开启、当前处于什么状态（验证后可删）
+	UE_LOG(LogTemp, Warning, TEXT("[Crouch] INPUT %s CanEverCrouch=%d CanCrouch=%d IsCrouched=%d Wants=%d Role=%d Auth=%d"),
+		*GetName(),
+		CMC->CanEverCrouch() ? 1 : 0,
+		ControlledCharacter->CanCrouch() ? 1 : 0,
+		ControlledCharacter->bIsCrouched ? 1 : 0,
+		CMC->bWantsToCrouch ? 1 : 0,
+		static_cast<int32>(ControlledCharacter->GetLocalRole()),
+		ControlledCharacter->HasAuthority() ? 1 : 0);
+
+	// 判断用 bWantsToCrouch（标准入口里立即写入），保证快速连按也能正确反向；
+	// 若用 bIsCrouched 判断，CMC 要到下一帧才处理请求，连按会重复发出同一个方向。
+	// 执行走标准入口：Crouch()/UnCrouch() 会做 CanCrouch 检查、维护状态并触发 OnStart/EndCrouch
+	// （远端靠 bIsCrouched 复制触发）。裸写 bWantsToCrouch 会被服务器 CanEverCrouch() 一票否决。
+	if (CMC->bWantsToCrouch)
 	{
-		CMC->bWantsToCrouch = !CMC->bWantsToCrouch;
+		ControlledCharacter->UnCrouch();
+	}
+	else
+	{
+		ControlledCharacter->Crouch();
 	}
 }
 
 void AShooterPlayerController::Input_Jump()
 {
-	if (!IsValid(GetCharacter())) return;
+	ACharacter* ControlledCharacter = GetCharacter();
+	if (!IsValid(ControlledCharacter)) return;
 	if (!bPawnAlive) return;
-	
-	UCharacterMovementComponent* CMC = GetCharacter()->GetCharacterMovement();
+
+	UCharacterMovementComponent* CMC = ControlledCharacter->GetCharacterMovement();
 	if (!IsValid(CMC)) return;
-	
+
+	// 蹲伏时按跳先起立：同样走标准入口，避免只把 bWantsToCrouch 置 false 而胶囊/状态不同步
 	if (CMC->bWantsToCrouch)
 	{
-		CMC->bWantsToCrouch = false;
+		ControlledCharacter->UnCrouch();
 	}
 	else
 	{
-		GetCharacter()->Jump();
+		ControlledCharacter->Jump();
 	}
 }
 

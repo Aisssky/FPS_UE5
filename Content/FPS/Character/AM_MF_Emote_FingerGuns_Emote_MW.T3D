@@ -1,0 +1,45 @@
+Begin Object Class=/Script/Engine.AnimMontage Name="AM_MF_Emote_FingerGuns_Emote_MW" ExportPath="/Script/Engine.AnimMontage'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW'"
+   Begin Object Class=/Script/UnrealEd.SceneThumbnailInfo Name="SceneThumbnailInfo_0" ExportPath="/Script/UnrealEd.SceneThumbnailInfo'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:SceneThumbnailInfo_0'"
+   End Object
+   Begin Object Class=/Game/Audio/Sounds/Emotes/ANS_EmoteSound.ANS_EmoteSound_C Name="ANS_EmoteSound_C_0" ExportPath="/Game/Audio/Sounds/Emotes/ANS_EmoteSound.ANS_EmoteSound_C'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:ANS_EmoteSound_C_0'"
+   End Object
+   Begin Object Class=/Script/MotionWarping.AnimNotifyState_MotionWarping Name="AnimNotifyState_MotionWarping_0" ExportPath="/Script/MotionWarping.AnimNotifyState_MotionWarping'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:AnimNotifyState_MotionWarping_0'"
+      Begin Object Class=/Script/MotionWarping.RootMotionModifier_SkewWarp Name="RootMotionModifier_SkewWarp" Archetype="/Script/MotionWarping.RootMotionModifier_SkewWarp'/Script/MotionWarping.Default__AnimNotifyState_MotionWarping:RootMotionModifier_SkewWarp'" ExportPath="/Script/MotionWarping.RootMotionModifier_SkewWarp'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:AnimNotifyState_MotionWarping_0.RootMotionModifier_SkewWarp'"
+      End Object
+   End Object
+   Begin Object Class=/Script/Engine.AnimDataModel Name="AnimDataModel" ExportPath="/Script/Engine.AnimDataModel'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:AnimDataModel'"
+   End Object
+   Begin Object Name="SceneThumbnailInfo_0" ExportPath="/Script/UnrealEd.SceneThumbnailInfo'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:SceneThumbnailInfo_0'"
+   End Object
+   Begin Object Name="ANS_EmoteSound_C_0" ExportPath="/Game/Audio/Sounds/Emotes/ANS_EmoteSound.ANS_EmoteSound_C'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:ANS_EmoteSound_C_0'"
+      Sound="/Script/MetasoundEngine.MetaSoundSource'/Game/Audio/MetaSounds/sfx_Emote_FingerGuns_nl_meta_Preset.sfx_Emote_FingerGuns_nl_meta_Preset'"
+   End Object
+   Begin Object Name="AnimNotifyState_MotionWarping_0" ExportPath="/Script/MotionWarping.AnimNotifyState_MotionWarping'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:AnimNotifyState_MotionWarping_0'"
+      Begin Object Name="RootMotionModifier_SkewWarp" ExportPath="/Script/MotionWarping.RootMotionModifier_SkewWarp'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:AnimNotifyState_MotionWarping_0.RootMotionModifier_SkewWarp'"
+         WarpTargetName="Align"
+      End Object
+      RootMotionModifier="RootMotionModifier_SkewWarp"
+   End Object
+   Begin Object Name="AnimDataModel" ExportPath="/Script/Engine.AnimDataModel'/Game/Characters/Heroes/Mannequin/Animations/Actions/AM_MF_Emote_FingerGuns_Emote_MW.AM_MF_Emote_FingerGuns_Emote_MW:AnimDataModel'"
+      FrameRate=(Numerator=100000)
+      NumberOfFrames=545000
+      NumberOfKeys=545001
+      CurveData=(FloatCurves=((FloatCurve=(Keys=((Value=1.000000))),Color=(R=0.768628,G=0.662470,B=0.177839,A=1.000000),CurveName="DisableLHandIK",CurveTypeFlags=16),(FloatCurve=(Keys=((Value=1.000000))),Color=(R=0.768628,G=0.177839,B=0.371691,A=1.000000),CurveName="DisableRHandIK",CurveTypeFlags=16),(FloatCurve=(Keys=((Time=0.133333,Value=1.000000),(Time=5.266667,Value=1.000000),(Time=5.633333))),Color=(R=0.348614,G=0.768628,B=0.177839,A=1.000000),CurveName="ScaleDownWeaponR",CurveTypeFlags=4)))
+      bPopulated=True
+   End Object
+   BlendIn=(BlendTime=0.200000,BlendOption=HermiteCubic)
+   BlendOut=(BlendTime=0.500000,BlendOption=HermiteCubic)
+   CompositeSections(0)=(SectionName="Default",LinkedMontage="/Script/Engine.AnimMontage'AM_MF_Emote_FingerGuns_Emote_MW'",SegmentIndex=0,SegmentLength=5.450000,LinkedSequence="/Script/Engine.AnimSequence'/Game/Characters/Heroes/Mannequin/Animations/Actions/MF_Emote_FingerGuns_Emote_MW.MF_Emote_FingerGuns_Emote_MW'")
+   SlotAnimTracks(0)=(SlotName="FullBody",AnimTrack=(AnimSegments=((CachedPlayLength=5.833333,AnimReference="/Script/Engine.AnimSequence'/Game/Characters/Heroes/Mannequin/Animations/Actions/MF_Emote_FingerGuns_Emote_MW.MF_Emote_FingerGuns_Emote_MW'",AnimStartTime=0.150000,AnimEndTime=5.600000))))
+   BlendProfileOut="/Script/Engine.BlendProfile'/Game/Characters/Heroes/Mannequin/Meshes/SK_Mannequin.SK_Mannequin:FastFeet'"
+   CommonTargetFrameRate=(Numerator=30)
+   Notifies(0)=(TriggerTimeOffset=-0.000100,NotifyName="MotionWarping",NotifyStateClass="/Script/MotionWarping.AnimNotifyState_MotionWarping'AnimNotifyState_MotionWarping_0'",Duration=0.356941,EndLink=(LinkedMontage="/Script/Engine.AnimMontage'AM_MF_Emote_FingerGuns_Emote_MW'",SegmentIndex=0,SegmentLength=5.450000,LinkValue=0.356941,LinkedSequence="/Script/Engine.AnimSequence'/Game/Characters/Heroes/Mannequin/Animations/Actions/MF_Emote_FingerGuns_Emote_MW.MF_Emote_FingerGuns_Emote_MW'"),Guid=9B69653E48AF3B65E8E35BA4DB648D80,TrackIndex=1,LinkedMontage="/Script/Engine.AnimMontage'AM_MF_Emote_FingerGuns_Emote_MW'",SegmentIndex=0,SegmentLength=5.450000,LinkedSequence="/Script/Engine.AnimSequence'/Game/Characters/Heroes/Mannequin/Animations/Actions/MF_Emote_FingerGuns_Emote_MW.MF_Emote_FingerGuns_Emote_MW'")
+   Notifies(1)=(EndTriggerTimeOffset=-0.000100,NotifyName="ANS_EmoteSound_C",NotifyStateClass="/Game/Audio/Sounds/Emotes/ANS_EmoteSound.ANS_EmoteSound_C'ANS_EmoteSound_C_0'",Duration=5.192394,EndLink=(LinkedMontage="/Script/Engine.AnimMontage'AM_MF_Emote_FingerGuns_Emote_MW'",SegmentIndex=0,SegmentLength=5.450000,LinkValue=5.450000,LinkedSequence="/Script/Engine.AnimSequence'/Game/Characters/Heroes/Mannequin/Animations/Actions/MF_Emote_FingerGuns_Emote_MW.MF_Emote_FingerGuns_Emote_MW'"),Guid=5D426E604DF12DB9C57BBDBEA92D1A1A,LinkedMontage="/Script/Engine.AnimMontage'AM_MF_Emote_FingerGuns_Emote_MW'",SegmentIndex=0,SegmentLength=5.450000,LinkValue=0.257605,LinkedSequence="/Script/Engine.AnimSequence'/Game/Characters/Heroes/Mannequin/Animations/Actions/MF_Emote_FingerGuns_Emote_MW.MF_Emote_FingerGuns_Emote_MW'")
+   SequenceLength=5.450000
+   RawCurveData=(FloatCurves=((FloatCurve=(Keys=((Value=1.000000))),Color=(R=0.768628,G=0.662470,B=0.177839,A=1.000000),CurveName="DisableLHandIK",CurveTypeFlags=16),(FloatCurve=(Keys=((Value=1.000000))),Color=(R=0.768628,G=0.177839,B=0.371691,A=1.000000),CurveName="DisableRHandIK",CurveTypeFlags=16),(FloatCurve=(Keys=((Time=0.133333,Value=1.000000),(Time=5.266667,Value=1.000000),(Time=5.633333))),Color=(R=0.348614,G=0.768628,B=0.177839,A=1.000000),CurveName="ScaleDownWeaponR",CurveTypeFlags=4)))
+   AnimNotifyTracks(0)=(TrackName="1",TrackColor=(R=0.500000,G=0.500000,B=0.500000,A=1.000000))
+   AnimNotifyTracks(1)=(TrackName="2",TrackColor=(R=0.900000,G=0.900000,B=0.900000,A=0.900000))
+   DataModelInterface=AnimDataModel'AM_MF_Emote_FingerGuns_Emote_MW:AnimDataModel'
+   Skeleton="/Script/Engine.Skeleton'/Game/Characters/Heroes/Mannequin/Meshes/SK_Mannequin.SK_Mannequin'"
+   ThumbnailInfo="/Script/UnrealEd.SceneThumbnailInfo'SceneThumbnailInfo_0'"
+End Object
